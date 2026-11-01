@@ -1,0 +1,258 @@
+---
+title: "The Taylor Rule and the Federal Funds Rate"
+subtitle: "A visualization and regression exercise · 1987 Q1–2007 Q4"
+author: "Brett Taylor"
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 2
+    embed-resources: true
+    code-fold: true
+execute:
+  echo: false
+  message: false
+---
+# Purpose of This Project
+I created this project to further familiarize myself with data visualization, economic data collection, and econometrics using R. I also set out to learn more about how the Federal Reserve makes decisions around setting the Federal Funds Rate. In practice, the Federal Open Market Committee sets a target range for the Federal Funds Rate. Rules like the Taylor Rule are used and modeled as guides rather than strict mathematical rules. When I discuss the results of my regression, you will see some of the issues with using a rule like this as a strict mathematical rule. In this project, I created a data visualization of the actual Federal Funds Rate alongside the Taylor Rule suggestion rate using the calculation supplied by the Federal Reserve. Inspiration for my visualization can be found here on the St. Louis Federal Reserve website: https://fred.stlouisfed.org/blog/2014/04/the-taylor-rule
+
+I specifically chose the years 1987 - 2007 to narrow the analysis to years that happened before or after significant macro economic events for simplification purposes. You can also check their calculated rates against mine in my visualization. Afterwards, I ran a simple regression and plotted the residuals across time; due to autocorrelation, I ran a Breusch Godfrey test afterwards, but still found evidence of serial correlation. I end with my final thoughts and what I learned from completing this project. 
+
+# Data collection and Data Manipulation
+For my data, I used quarterly data from 1987-2007, starting from 1987Q1 and ending through 2007Q4. I downloaded data directly from the Federal Reserve Bank of St. Louis’s FRED database using the quantmod package and library. The first thing I did with the data was convert our monthly Federal Funds Rate into quarterly average to match the other series. Afterwards, we use the index function to retrieve existing dates and convert them into years with quarter labels using the as.yearqtr function. Lastly, we combine our series into a new data frame using merge(). This uses their indexes and places the four series side by side. 
+
+# Taylor Rule Calculation
+$$
+FFR_t = r_t^{LR} + \pi_t + 0.5(\pi_t - \pi^*) + 0.5(y_t - y_t^P)
+$$
+This is the Taylor Rule formula that can be found here: https://www.federalreserve.gov/monetarypolicy/principles-for-the-conduct-of-monetary-policy.htm
+
+We are adding the neutral interest rate to the inflation rate to get a nominal interest rate. For my model, the neutral rate is assumed to be 2%. We subtract our target inflation rate (2%) form our actual inflation rate. Multiplying by 0.5 acts as the adjustment, so if our rate is below the target, the prescribed rate is decreased, and vice versa. The same concept applies for our output gap. We subtract GDP potential from actual GDP to measure how far above or below output is relative to its sustainable level. 0.5 is our adjustment term. FFR is the Federal Funds Rate (interest rate). Before we use the formula, we calculate inflation and the output gap. In the process, we create an inflation and output gap column in a new data frame and create a study_data data frame that includes our selected years: 1987-2007. 
+
+We then use our new variables and plug them into the the Taylor Rule foruma. The result for each quarter are stored in a new coulumn titled "taylor_rate" inside of our study_data data frame:
+
+```{r}
+# Now we calculate using the Taylor Rule
+# Create a new column in study_data df and then calculate optimal interest rate
+# Prescribed rate of 2%
+# FFR = 2 + inflation + 0.5 (inflation - 2) + 0.5 (output gap)
+study_data$taylor_rate <- 2 + study_data$inflation + 0.5 * (study_data$inflation - 2) + 0.5 * study_data$output_gap
+head(study_data)
+```
+
+# FFR vs Taylor Rate Visualization
+Below is a line graph I created using the ggplot2 and plotly packages. It plots the calculated prescribed Taylor rate alongside the actual Federal Funds Rate from each coresponding year and quarter
+```{r}
+library(quantmod)
+library(ggplot2)
+library(plotly)
+
+plot_data <- data.frame(
+  year = as.Date(index(study_data)),
+  coredata(study_data)
+)
+
+plot_data$period <- paste0(
+  "Q", format(as.yearqtr(plot_data$year), "%q"),
+  " ", format(plot_data$year, "%B %Y")
+)
+
+# plot FFR alongside taylor rate, create a tool tip
+p <- ggplot(plot_data, aes(x = year, group = 1)) +
+   geom_line(aes(
+     y = FEDFUNDS, color = "Federal Funds Rate",
+     text = paste0(period, "<br>", sprintf("%.2f%%", FEDFUNDS)) 
+     )) +
+    geom_line(aes(
+      y = taylor_rate, color = "Taylor Rule",
+      text = paste0(period, "<br>", sprintf("%.2f%%", taylor_rate))
+    )) +
+    scale_color_manual(
+    values = c(
+      "Federal Funds Rate" = "red",
+      "Taylor Rule" = "blue"
+    )
+  ) +
+  theme(
+    legend.position = "none",
+    plot.title = ggtext::element_markdown()
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    title = paste0(
+      "<b><span style='color:red'>Federal Funds Rate</span> vs. ",
+      "<span style='color:blue'>Taylor Rule</span> (%)</b>",
+      "<br><span style='font-size:14px;color:black'>1987 Q1–2007 Q4</span>"
+    )
+  )
+
+# more aesthetics for tool tip box. adding a boarder, changing the background color
+interactive_plot <- plotly::ggplotly(p, tooltip = "text")
+
+interactive_plot <- plotly::style(
+  interactive_plot,
+  hoverlabel = list(
+    bgcolor = "white",
+    bordercolor = "red",
+    font = list(color = "black")
+  ),
+  traces = 1
+)
+
+interactive_plot <- plotly::style(
+  interactive_plot,
+  hoverlabel = list(
+    bgcolor = "white",
+    bordercolor = "blue",
+    font = list(color = "black")
+  ),
+  traces = 2
+)
+interactive_plot <- plotly::layout(
+  interactive_plot,
+  title = list(
+    text = paste0(
+      "<b><span style='color:red'>Federal Funds Rate</span> vs. ",
+      "<span style='color:blue'>Taylor Rule</span> (%)</b>",
+      "<br>1987 Q1–2007 Q4"
+    ),
+    font = list(size = 20),
+    yref = "container",
+    y = 0.97,
+    yanchor = "top"
+  ),
+  margin = list(t = 60)
+)
+interactive_plot
+```
+
+# Regression Results
+$$
+FFR_t = \beta_0 + \beta_1 \pi_t + \beta_2 gap_t + \varepsilon_t
+$$
+I estimated a linear regression in the form of Ordinary Least Squares to see how well inflation and the output gap explain the Federal Funds Rate. One thing to note is that the Taylor Rule was calculated using fixed coefficients whereas this regression uses our data samples. Below are the results of the regression:
+```{r}
+ols_model <- lm(
+  FEDFUNDS ~ inflation + output_gap,
+  data = as.data.frame(study_data)
+)
+
+# print results
+summary(ols_model)
+```
+Both inflation and the output gap are both positively associated with the Federal Funds Rate. Our model explains roughly 46% of the variance in the Federal Funds Rate. Both of our coefficients show statistical significance; however, after plotting our residuals across time, we have strong evidence of residual autocorrelation. I used the forecast, ggplot2, and plotly packages to plot our resiudals across time. 
+```{r}
+library(lmtest)
+library(forecast)
+library(quantmod)
+library(ggplot2)
+library(plotly)
+
+p_residuals <- ggplot(plot_data, aes(x = year, group = 1)) +
+  geom_line(aes(
+   y = residuals(ols_model), color = "Residuals (percentage points)",
+   text = paste0(period, "<br>", sprintf("%.2f percentage points", residuals(ols_model)))
+  )) +
+  geom_hline(
+    yintercept = 0,
+    color = "red",
+    linetype = "dashed"
+  ) +
+  scale_color_manual(
+    values = c("Residuals (percentage points)" = "black")
+  ) +
+  labs(
+    title = "<b>Residuals Across Time<b>"
+  ) +
+  theme(
+    legend.position = "none",
+    plot.title = ggtext::element_markdown()
+  )
+
+# add border and change background color of tooltip
+interactive_plot <- plotly::ggplotly(p_residuals, tooltip = "text")
+
+interactive_plot <- plotly::style( 
+  interactive_plot,
+  hoverlabel = list(
+    bgcolor = "white",
+    bordercolor = "black",
+    font = list(color = "black")
+  ),
+  traces = 1
+)
+interactive_plot
+
+# checking for autocorrelation
+acf_residuals <- acf(
+  residuals(ols_model),
+  lag.max = 12,
+  plot = FALSE
+)
+
+# organize results in dataframe
+acf_data <- data.frame(
+  lag = as.numeric(acf_residuals$lag),
+  correlation = as.numeric(acf_residuals$acf)
+)
+
+# 95% bounds with no autocorrelation
+p_acf <- forecast::autoplot(acf_residuals, ci = 0.95) +
+labs(
+  title = "<b>Autocorrelation of Residuals<b>",
+  x = "Lag (Quarter)",
+  y = NULL,
+) +
+  theme(
+    legend.position = "none",
+    plot.title = ggtext::element_markdown()
+  )
+p_acf
+```
+Because our plot suggests our residuals are all positively auto correlated, I ran a Breusch Godfrey test to formally test for serial correlation. I use an order of 4 as one year is comprised of 4 quarters. So our Null hypothesis is that there is no serial correlation across 4 quarters. The results from the Breusch Godfrey test below:
+```{r}
+# conduct Breusch Godfrey test
+lmtest::bgtest(ols_model, order = 4)
+```
+Our p-value is significantly below the 0.05 threshold so we reject the null hypothesis. Our residuals show serial correlation across 4 quarters. We can no longer rely on the results of our original OLS model. This can be expected as the Federal Reserve gradually adjusts the interest rate. Our model currently does not adjust for last quarters FFR. The last thing I test is an OLS model with a lagged FFR to control for this. Intuitively, if our model predicts a sharper decline in the FFR while the actual rate declines only gradually, then our model is under predicting the rate in consecutive quarters; it is worth testing a lagged model to adjust for this. 
+# Lagged FFR model
+```{r}
+library(lmtest)
+study_data$FFR_lag1 <- c(
+  NA,
+  head(as.numeric(study_data$FEDFUNDS), -1)
+)
+
+# estimate our new model
+ols_lag <- lm(
+  FEDFUNDS ~ inflation + output_gap + FFR_lag1,
+  data = as.data.frame(study_data)
+)
+summary(ols_lag)
+```
+This lagged model slightly improved the model's fit; however, we will run another Breusch Godfrey test to see if our new model still contains residual autocorrelation.
+```{r}
+library(lmtest)
+
+# check for autocorrelation once more
+lmtest::bgtest(ols_lag, order = 4)
+```
+After running a second Breusch-Godfrey test, residual autocorrelation still remains, despite a slight improvement in our model's fit. 
+
+# Conclusions
+While our original model explained around 46% of the variation in the federal funds rate, its residuals showed positive autocorrelation, and serial correlation remained after adding the previous quarter’s rate. This means that the conventional standard errors and significance tests should be interpreted with caution. The improved fit of our lagged model suggests that interest rate persistence does matters, but one lag did not fully correct this serial correlation. 
+
+Positive associations between inflation, the output gap, and the federal funds rate are consistent with the economic intuition behind the Taylor Rule. Higher inflation and output above potential output could call for an increase in the rate and vice versa; however, our results do not establish causation, nor do they suggest that the Taylor Rule would product optimal economics conditions. 
+
+The Federal Reserve uses these policy rules as guides alongside a multitude of other methods. Monetary policy does not have an immediate effect on an economy,so current inflation and output alone do not explain every decision made behind setting the rate. This project was mostly an effort by me to improve my skills in econometrics and using the R programming language.
+
+# Code and Sources
+
+**GitHub repository:** [Add your repository link here before sharing.]
+
+The repository will contain the analysis code, this Quarto source file, and setup instructions. Data are downloaded at render time; the render date is `r format(Sys.Date(), "%B %d, %Y")`.
+
+- Federal Reserve Bank of St. Louis. FRED series: [FEDFUNDS](https://fred.stlouisfed.org/series/FEDFUNDS), [GDPDEF](https://fred.stlouisfed.org/series/GDPDEF), [GDPC1](https://fred.stlouisfed.org/series/GDPC1), and [GDPPOT](https://fred.stlouisfed.org/series/GDPPOT).
+- Board of Governors of the Federal Reserve System. [Principles for the Conduct of Monetary Policy](https://www.federalreserve.gov/monetarypolicy/principles-for-the-conduct-of-monetary-policy.htm).
+- Board of Governors of the Federal Reserve System. [Policy Rules and How Policymakers Use Them](https://www.federalreserve.gov/monetarypolicy/policy-rules-and-how-policymakers-use-them.htm).

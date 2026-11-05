@@ -29,9 +29,48 @@ This is the Taylor Rule formula that can be found here: https://www.federalreser
 
 We are adding the neutral interest rate to the inflation rate to get a nominal interest rate. For my model, the neutral rate is assumed to be 2%. We subtract our target inflation rate (2%) form our actual inflation rate. Multiplying by 0.5 acts as the adjustment, so if our rate is below the target, the prescribed rate is decreased, and vice versa. The same concept applies for our output gap. We subtract GDP potential from actual GDP to measure how far above or below output is relative to its sustainable level. 0.5 is our adjustment term. FFR is the Federal Funds Rate (interest rate). Before we use the formula, we calculate inflation and the output gap. In the process, we create an inflation and output gap column in a new data frame and create a study_data data frame that includes our selected years: 1987-2007. 
 
-We then use our new variables and plug them into the the Taylor Rule foruma. The result for each quarter are stored in a new coulumn titled "taylor_rate" inside of our study_data data frame:
+We then use our new variables and plug them into the the Taylor Rule formula. The result for each quarter are stored in a new column titled "taylor_rate" inside of our study_data data frame:
 
 ```{r}
+#| message: false
+#| warning: false
+#| echo: false
+library(lmtest)
+library(forecast)
+library(quantmod)
+library(ggplot2)
+library(plotly)
+
+load("fred_data.RData")
+
+# convert FFR into quarterly averages to match data and check
+FEDFUNDS_quarterly <- apply.quarterly(FEDFUNDS, FUN = colMeans)
+
+
+# give series a year and quarter label
+index(FEDFUNDS_quarterly) <- as.yearqtr(index(FEDFUNDS_quarterly))
+index(GDPDEF) <- as.yearqtr(index(GDPDEF))
+index(GDPC1) <- as.yearqtr(index(GDPC1))
+index(GDPPOT) <- as.yearqtr(index(GDPPOT))
+
+# combine the four series. quarters is present in all four
+taylor_data <- merge (
+  FEDFUNDS_quarterly, GDPDEF, GDPC1, GDPPOT,
+  all = FALSE
+)
+
+# create new column titled inflation. calculate inflation using GDP deflator
+# we want GDP from the year prior in the same quarter
+# lag function allows us to shift 4 quarters back with k = 4 to match quarters. subtract 1 for percent growth
+taylor_data$inflation <- (taylor_data$GDPDEF / lag(taylor_data$GDPDEF, k = 4) - 1) * 100
+
+# create new column for output gap. calculate output gap with real gdp and potential gdp
+taylor_data$output_gap <- ((taylor_data$GDPC1 - taylor_data$GDPPOT) / taylor_data$GDPPOT) * 100
+
+# create new data frame for our selected years of study 1987 - 2007 and check values
+study_data <- readRDS("study_data.rds")
+study_data <- taylor_data["1987/2007"]
+
 # Now we calculate using the Taylor Rule
 # Create a new column in study_data df and then calculate optimal interest rate
 # Prescribed rate of 2%
@@ -41,8 +80,11 @@ head(study_data)
 ```
 
 # FFR vs Taylor Rate Visualization
-Below is a line graph I created using the ggplot2 and plotly packages. It plots the calculated prescribed Taylor rate alongside the actual Federal Funds Rate from each coresponding year and quarter
+Below is a line graph I created using the ggplot2 and plotly packages. It plots the calculated prescribed Taylor rate alongside the actual Federal Funds Rate from each corresponding year and quarter
 ```{r}
+#| message: false
+#| warning: false
+#| echo: false
 library(quantmod)
 library(ggplot2)
 library(plotly)
@@ -143,6 +185,9 @@ summary(ols_model)
 ```
 Both inflation and the output gap are both positively associated with the Federal Funds Rate. Our model explains roughly 46% of the variance in the Federal Funds Rate. Both of our coefficients show statistical significance; however, after plotting our residuals across time, we have strong evidence of residual autocorrelation. I used the forecast, ggplot2, and plotly packages to plot our resiudals across time. 
 ```{r}
+#| message: false
+#| warning: false
+#| echo: false
 library(lmtest)
 library(forecast)
 library(quantmod)
@@ -212,12 +257,18 @@ p_acf
 ```
 Because our plot suggests our residuals are all positively auto correlated, I ran a Breusch Godfrey test to formally test for serial correlation. I use an order of 4 as one year is comprised of 4 quarters. So our Null hypothesis is that there is no serial correlation across 4 quarters. The results from the Breusch Godfrey test below:
 ```{r}
+#| message: false
+#| warning: false
+#| echo: false
 # conduct Breusch Godfrey test
 lmtest::bgtest(ols_model, order = 4)
 ```
 Our p-value is significantly below the 0.05 threshold so we reject the null hypothesis. Our residuals show serial correlation across 4 quarters. We can no longer rely on the results of our original OLS model. This can be expected as the Federal Reserve gradually adjusts the interest rate. Our model currently does not adjust for last quarters FFR. The last thing I test is an OLS model with a lagged FFR to control for this. Intuitively, if our model predicts a sharper decline in the FFR while the actual rate declines only gradually, then our model is under predicting the rate in consecutive quarters; it is worth testing a lagged model to adjust for this. 
 # Lagged FFR model
 ```{r}
+#| message: false
+#| warning: false
+#| echo: false
 library(lmtest)
 study_data$FFR_lag1 <- c(
   NA,
@@ -233,6 +284,9 @@ summary(ols_lag)
 ```
 This lagged model slightly improved the model's fit; however, we will run another Breusch Godfrey test to see if our new model still contains residual autocorrelation.
 ```{r}
+#| message: false
+#| warning: false
+#| echo: false
 library(lmtest)
 
 # check for autocorrelation once more
@@ -245,13 +299,11 @@ While our original model explained around 46% of the variation in the federal fu
 
 Positive associations between inflation, the output gap, and the federal funds rate are consistent with the economic intuition behind the Taylor Rule. Higher inflation and output above potential output could call for an increase in the rate and vice versa; however, our results do not establish causation, nor do they suggest that the Taylor Rule would product optimal economics conditions. 
 
-The Federal Reserve uses these policy rules as guides alongside a multitude of other methods. Monetary policy does not have an immediate effect on an economy,so current inflation and output alone do not explain every decision made behind setting the rate. This project was mostly an effort by me to improve my skills in econometrics and using the R programming language.
+The Federal Reserve uses these policy rules as guides alongside a multitude of other methods. Monetary policy does not have an immediate effect on an economy, so current inflation and output alone do not explain every decision made behind setting the rate. This project was mostly an effort by me to improve my skills in econometrics and using the R programming language.
 
 # Code and Sources
 
 **GitHub repository:** [Add your repository link here before sharing.]
-
-The repository will contain the analysis code, this Quarto source file, and setup instructions. Data are downloaded at render time; the render date is `r format(Sys.Date(), "%B %d, %Y")`.
 
 - Federal Reserve Bank of St. Louis. FRED series: [FEDFUNDS](https://fred.stlouisfed.org/series/FEDFUNDS), [GDPDEF](https://fred.stlouisfed.org/series/GDPDEF), [GDPC1](https://fred.stlouisfed.org/series/GDPC1), and [GDPPOT](https://fred.stlouisfed.org/series/GDPPOT).
 - Board of Governors of the Federal Reserve System. [Principles for the Conduct of Monetary Policy](https://www.federalreserve.gov/monetarypolicy/principles-for-the-conduct-of-monetary-policy.htm).
